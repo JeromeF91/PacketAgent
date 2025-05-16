@@ -163,13 +163,19 @@ function Get-HardeningInfo {
             $smb1Enabled = ($smb1Status -eq 1)
         }
 
-        # Check TLS protocols
-        $tls10Enabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
-        $tls11Enabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
-        $tls12Enabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
-        $tls13Enabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        # Check TLS protocols (Server)
+        $tls10ServerEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls11ServerEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls12ServerEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls13ServerEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
 
-        # Check cipher suites
+        # Check TLS protocols (Client)
+        $tls10ClientEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls11ClientEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls12ClientEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+        $tls13ClientEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+
+        # Check cipher suites (Server)
         $weakCiphers = @(
             "RC4",
             "DES",
@@ -177,15 +183,29 @@ function Get-HardeningInfo {
             "NULL"
         )
         
-        $enabledCiphers = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\*" -ErrorAction SilentlyContinue | 
+        $enabledServerCiphers = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\*" -ErrorAction SilentlyContinue | 
             Where-Object { $_.Enabled -eq 1 } | 
             Select-Object -ExpandProperty PSChildName
 
-        $weakCiphersEnabled = $false
-        foreach ($cipher in $enabledCiphers) {
+        $weakServerCiphersEnabled = $false
+        foreach ($cipher in $enabledServerCiphers) {
             if ($weakCiphers -contains $cipher) {
-                $weakCiphersEnabled = $true
+                $weakServerCiphersEnabled = $true
                 break
+            }
+        }
+
+        # Check cipher suites (Client)
+        $enabledClientCiphers = Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002" -Name "Functions" -ErrorAction SilentlyContinue | 
+            Select-Object -ExpandProperty Functions
+
+        $weakClientCiphersEnabled = $false
+        if ($enabledClientCiphers) {
+            foreach ($cipher in $weakCiphers) {
+                if ($enabledClientCiphers -like "*$cipher*") {
+                    $weakClientCiphersEnabled = $true
+                    break
+                }
             }
         }
         
@@ -193,14 +213,28 @@ function Get-HardeningInfo {
             "smb1Enabled" = $smb1Enabled
             "smb1Status" = if ($smb1Enabled) { "Enabled" } else { "Disabled" }
             "tlsProtocols" = @{
-                "tls10" = if ($tls10Enabled -eq 1) { "Enabled" } else { "Disabled" }
-                "tls11" = if ($tls11Enabled -eq 1) { "Enabled" } else { "Disabled" }
-                "tls12" = if ($tls12Enabled -eq 1) { "Enabled" } else { "Disabled" }
-                "tls13" = if ($tls13Enabled -eq 1) { "Enabled" } else { "Disabled" }
+                "server" = @{
+                    "tls10" = if ($tls10ServerEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls11" = if ($tls11ServerEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls12" = if ($tls12ServerEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls13" = if ($tls13ServerEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                }
+                "client" = @{
+                    "tls10" = if ($tls10ClientEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls11" = if ($tls11ClientEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls12" = if ($tls12ClientEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                    "tls13" = if ($tls13ClientEnabled -eq 1) { "Enabled" } else { "Disabled" }
+                }
             }
             "cipherSuites" = @{
-                "weakCiphersEnabled" = $weakCiphersEnabled
-                "enabledCiphers" = $enabledCiphers
+                "server" = @{
+                    "weakCiphersEnabled" = $weakServerCiphersEnabled
+                    "enabledCiphers" = $enabledServerCiphers
+                }
+                "client" = @{
+                    "weakCiphersEnabled" = $weakClientCiphersEnabled
+                    "enabledCiphers" = $enabledClientCiphers
+                }
             }
         }
         

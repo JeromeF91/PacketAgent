@@ -56,17 +56,34 @@ The agent sends package reports to this endpoint and expects a response with pac
         "smb1Enabled": false,
         "smb1Status": "Disabled",
         "tlsProtocols": {
-            "tls10": "Disabled",
-            "tls11": "Disabled",
-            "tls12": "Enabled",
-            "tls13": "Enabled"
+            "server": {
+                "tls10": "Disabled",
+                "tls11": "Disabled",
+                "tls12": "Enabled",
+                "tls13": "Enabled"
+            },
+            "client": {
+                "tls10": "Disabled",
+                "tls11": "Disabled",
+                "tls12": "Enabled",
+                "tls13": "Enabled"
+            }
         },
         "cipherSuites": {
-            "weakCiphersEnabled": false,
-            "enabledCiphers": [
-                "AES 128/128",
-                "AES 256/256"
-            ]
+            "server": {
+                "weakCiphersEnabled": false,
+                "enabledCiphers": [
+                    "AES 128/128",
+                    "AES 256/256"
+                ]
+            },
+            "client": {
+                "weakCiphersEnabled": false,
+                "enabledCiphers": [
+                    "TLS_AES_128_GCM_SHA256",
+                    "TLS_AES_256_GCM_SHA384"
+                ]
+            }
         }
     }
 }
@@ -80,8 +97,8 @@ The report includes:
 - `diskSpace`: C: drive space information in bytes
 - `hardening`: Security hardening status including:
   - SMB1 protocol status
-  - TLS protocol versions (1.0, 1.1, 1.2, 1.3)
-  - Cipher suite status (including weak cipher detection)
+  - TLS protocol versions (1.0, 1.1, 1.2, 1.3) for both server and client
+  - Cipher suite status (including weak cipher detection) for both server and client
 
 #### Response Format
 The API should return a response with packages to install/update in the following format:
