@@ -152,6 +152,187 @@ function Get-WindowsVersionInfo {
     }
 }
 
+# Function to remediate WinVerifyTrust certificate padding
+function Enable-WinVerifyTrustPadding {
+    try {
+        $winVerifyTrustPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Wintrust\Config"
+        
+        # Create the registry key if it doesn't exist
+        if (-not (Test-Path $winVerifyTrustPath)) {
+            New-Item -Path $winVerifyTrustPath -Force | Out-Null
+        }
+        
+        # Set the EnableCertPaddingCheck value to 1 (enabled)
+        Set-ItemProperty -Path $winVerifyTrustPath -Name "EnableCertPaddingCheck" -Value 1 -Type DWord -Force
+        
+        Write-Log "Successfully enabled WinVerifyTrust certificate padding check" "INFO"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to enable WinVerifyTrust certificate padding check: $_" "ERROR"
+        return $false
+    }
+}
+
+# Function to check if running with administrator privileges
+function Test-Administrator {
+    $currentUser = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $currentUser.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Function to remediate SMB1
+function Disable-SMB1 {
+    if (-not (Test-Administrator)) {
+        Write-Log "SMB1 remediation requires administrator privileges. Please run the script as administrator." "ERROR"
+        return $false
+    }
+
+    try {
+        # Disable SMB1 in Windows Features
+        $smb1Feature = Get-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -ErrorAction Stop
+        if ($smb1Feature.State -eq "Enabled") {
+            Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -NoRestart -ErrorAction Stop
+            Write-Log "Successfully disabled SMB1 protocol" "INFO"
+        }
+
+        # Disable SMB1 in registry
+        $smb1Path = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        if (-not (Test-Path $smb1Path)) {
+            New-Item -Path $smb1Path -Force | Out-Null
+        }
+        Set-ItemProperty -Path $smb1Path -Name "AllowInsecureGuestAuth" -Value 0 -Type DWord -Force
+        
+        Write-Log "Successfully disabled SMB1 in registry" "INFO"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to disable SMB1: $_" "ERROR"
+        return $false
+    }
+}
+
+# Function to check and remediate Spectre and Meltdown vulnerabilities
+function Get-SpectreMeltdownStatus {
+    try {
+        $status = @{
+            "spectreV2" = @{
+                "enabled" = $true
+                "status" = "Protected"
+            }
+            "meltdown" = @{
+                "enabled" = $true
+                "status" = "Protected"
+            }
+            "ssb" = @{
+                "enabled" = $true
+                "status" = "Protected"
+                "cve" = "CVE-2018-3639"
+            }
+        }
+
+        # Check registry settings for Spectre V2
+        $spectreV2Path = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        $spectreV2Value = (Get-ItemProperty -Path $spectreV2Path -Name "FeatureSettingsOverride" -ErrorAction SilentlyContinue).FeatureSettingsOverride
+        $spectreV2Mask = (Get-ItemProperty -Path $spectreV2Path -Name "FeatureSettingsOverrideMask" -ErrorAction SilentlyContinue).FeatureSettingsOverrideMask
+
+        if ($spectreV2Value -ne $null -and $spectreV2Mask -ne $null) {
+            # Check if Spectre V2 protection is disabled
+            if (($spectreV2Value -band $spectreV2Mask) -eq 0) {
+                $status.spectreV2.enabled = $false
+                $status.spectreV2.status = "Vulnerable"
+            }
+        }
+
+        # Check registry settings for Meltdown
+        $meltdownPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        $meltdownValue = (Get-ItemProperty -Path $meltdownPath -Name "FeatureSettingsOverride" -ErrorAction SilentlyContinue).FeatureSettingsOverride
+        $meltdownMask = (Get-ItemProperty -Path $meltdownPath -Name "FeatureSettingsOverrideMask" -ErrorAction SilentlyContinue).FeatureSettingsOverrideMask
+
+        if ($meltdownValue -ne $null -and $meltdownMask -ne $null) {
+            # Check if Meltdown protection is disabled
+            if (($meltdownValue -band $meltdownMask) -eq 0) {
+                $status.meltdown.enabled = $false
+                $status.meltdown.status = "Vulnerable"
+            }
+        }
+
+        # Check registry settings for SSB (CVE-2018-3639)
+        $ssbPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        $ssbValue = (Get-ItemProperty -Path $ssbPath -Name "FeatureSettingsOverride" -ErrorAction SilentlyContinue).FeatureSettingsOverride
+        $ssbMask = (Get-ItemProperty -Path $ssbPath -Name "FeatureSettingsOverrideMask" -ErrorAction SilentlyContinue).FeatureSettingsOverrideMask
+
+        if ($ssbValue -ne $null -and $ssbMask -ne $null) {
+            # Check if SSB protection is disabled
+            if (($ssbValue -band $ssbMask) -eq 0) {
+                $status.ssb.enabled = $false
+                $status.ssb.status = "Vulnerable"
+            }
+        }
+
+        # Additional check for SSB using CPU information
+        try {
+            $cpuInfo = Get-CimInstance -ClassName Win32_Processor
+            if ($cpuInfo) {
+                # Check if CPU supports SSB mitigation
+                $supportsSSBMitigation = $cpuInfo.Caption -match "Intel|AMD"
+                if (-not $supportsSSBMitigation) {
+                    $status.ssb.enabled = $false
+                    $status.ssb.status = "Not Supported"
+                }
+            }
+        }
+        catch {
+            Write-Log "Could not check CPU information for SSB: $_" "DEBUG"
+        }
+
+        return $status
+    }
+    catch {
+        Write-Log "Failed to check Spectre/Meltdown/SSB status: $_" "ERROR"
+        return $null
+    }
+}
+
+# Function to remediate Spectre and Meltdown vulnerabilities
+function Enable-SpectreMeltdownProtection {
+    if (-not (Test-Administrator)) {
+        Write-Log "Spectre/Meltdown/SSB remediation requires administrator privileges. Please run the script as administrator." "ERROR"
+        return $false
+    }
+
+    try {
+        $memoryManagementPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+        
+        # Create the registry key if it doesn't exist
+        if (-not (Test-Path $memoryManagementPath)) {
+            New-Item -Path $memoryManagementPath -Force | Out-Null
+        }
+
+        # Enable Spectre V2 protection
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverride" -Value 0 -Type DWord -Force
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverrideMask" -Value 3 -Type DWord -Force
+
+        # Enable Meltdown protection
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverride" -Value 0 -Type DWord -Force
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverrideMask" -Value 3 -Type DWord -Force
+
+        # Enable SSB protection (CVE-2018-3639)
+        # The correct registry settings for SSB are:
+        # - FeatureSettingsOverride = 0
+        # - FeatureSettingsOverrideMask = 3
+        # These are the same as Spectre/Meltdown as they control all speculative execution mitigations
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverride" -Value 0 -Type DWord -Force
+        Set-ItemProperty -Path $memoryManagementPath -Name "FeatureSettingsOverrideMask" -Value 3 -Type DWord -Force
+
+        Write-Log "Successfully enabled Spectre, Meltdown, and SSB protections" "INFO"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to enable Spectre/Meltdown/SSB protections: $_" "ERROR"
+        return $false
+    }
+}
+
 # Function to get hardening information
 function Get-HardeningInfo {
     try {
@@ -161,6 +342,56 @@ function Get-HardeningInfo {
         
         if ($smb1Status -ne $null) {
             $smb1Enabled = ($smb1Status -eq 1)
+        }
+
+        # Check if SMB1 is enabled in Windows Features (only if running as admin)
+        if (Test-Administrator) {
+            try {
+                $smb1Feature = Get-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -ErrorAction Stop
+                if ($smb1Feature.State -eq "Enabled") {
+                    $smb1Enabled = $true
+                }
+            }
+            catch {
+                Write-Log "Could not check SMB1 feature status: $_" "DEBUG"
+            }
+        }
+        else {
+            Write-Log "Skipping SMB1 feature check - requires administrator privileges" "DEBUG"
+        }
+
+        # Remediate SMB1 if enabled
+        if ($smb1Enabled) {
+            Write-Log "SMB1 is enabled. Attempting to disable..." "WARNING"
+            Disable-SMB1
+        }
+
+        # Check WinVerifyTrust Signature Validation
+        $winVerifyTrustPath = "HKLM:\SOFTWARE\Microsoft\Cryptography\Wintrust\Config"
+        $winVerifyTrustEnabled = $true  # Default is enabled
+        try {
+            $winVerifyTrustValue = (Get-ItemProperty -Path $winVerifyTrustPath -Name "EnableCertPaddingCheck" -ErrorAction Stop).EnableCertPaddingCheck
+            if ($winVerifyTrustValue -eq 0) {
+                $winVerifyTrustEnabled = $false
+                # Attempt to remediate if disabled
+                Write-Log "WinVerifyTrust certificate padding check is disabled. Attempting to enable..." "WARNING"
+                Enable-WinVerifyTrustPadding
+            }
+        }
+        catch {
+            Write-Log "Could not read WinVerifyTrust status: $_" "DEBUG"
+        }
+
+        # Check Spectre and Meltdown status
+        $spectreMeltdownStatus = Get-SpectreMeltdownStatus
+        if ($spectreMeltdownStatus) {
+            # Attempt remediation if vulnerable
+            if (-not $spectreMeltdownStatus.spectreV2.enabled -or -not $spectreMeltdownStatus.meltdown.enabled) {
+                Write-Log "Spectre/Meltdown vulnerabilities detected. Attempting to enable protections..." "WARNING"
+                Enable-SpectreMeltdownProtection
+                # Refresh status after remediation
+                $spectreMeltdownStatus = Get-SpectreMeltdownStatus
+            }
         }
 
         # Check TLS protocols (Server)
@@ -183,35 +414,72 @@ function Get-HardeningInfo {
             "NULL"
         )
         
-        $enabledServerCiphers = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\*" -ErrorAction SilentlyContinue | 
-            Where-Object { $_.Enabled -eq 1 } | 
-            Select-Object -ExpandProperty PSChildName
-
+        # Get server cipher suites from SCHANNEL
+        $schannelCiphersPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers"
+        $enabledServerCiphers = @()
         $weakServerCiphersEnabled = $false
-        foreach ($cipher in $enabledServerCiphers) {
-            if ($weakCiphers -contains $cipher) {
-                $weakServerCiphersEnabled = $true
-                break
-            }
-        }
 
-        # Check cipher suites (Client)
-        $enabledClientCiphers = Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002" -Name "Functions" -ErrorAction SilentlyContinue | 
-            Select-Object -ExpandProperty Functions
-
-        $weakClientCiphersEnabled = $false
-        if ($enabledClientCiphers) {
-            foreach ($cipher in $weakCiphers) {
-                if ($enabledClientCiphers -like "*$cipher*") {
-                    $weakClientCiphersEnabled = $true
-                    break
+        try {
+            # Get all cipher subkeys
+            $cipherKeys = Get-ChildItem -Path $schannelCiphersPath -ErrorAction Stop
+            foreach ($key in $cipherKeys) {
+                $cipherName = $key.PSChildName
+                $enabled = (Get-ItemProperty -Path $key.PSPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+                
+                # If Enabled is not explicitly set to 0, consider it enabled (default behavior)
+                if ($enabled -ne 0) {
+                    $enabledServerCiphers += $cipherName
+                    # Check if this is a weak cipher
+                    foreach ($weakCipher in $weakCiphers) {
+                        if ($cipherName -like "*$weakCipher*") {
+                            $weakServerCiphersEnabled = $true
+                            break
+                        }
+                    }
                 }
             }
+        }
+        catch {
+            Write-Log "Could not read SCHANNEL cipher status: $_" "DEBUG"
+        }
+
+        # Get client cipher suites
+        $clientCipherPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers"
+        $enabledClientCiphers = @()
+        $weakClientCiphersEnabled = $false
+
+        try {
+            # Get all cipher subkeys for client
+            $clientCipherKeys = Get-ChildItem -Path $clientCipherPath -ErrorAction Stop
+            foreach ($key in $clientCipherKeys) {
+                $cipherName = $key.PSChildName
+                $enabled = (Get-ItemProperty -Path $key.PSPath -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+                
+                # If Enabled is not explicitly set to 0, consider it enabled (default behavior)
+                if ($enabled -ne 0) {
+                    $enabledClientCiphers += $cipherName
+                    # Check if this is a weak cipher
+                    foreach ($weakCipher in $weakCiphers) {
+                        if ($cipherName -like "*$weakCipher*") {
+                            $weakClientCiphersEnabled = $true
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Log "Could not read client cipher status: $_" "DEBUG"
         }
         
         $hardeningInfo = @{
             "smb1Enabled" = $smb1Enabled
             "smb1Status" = if ($smb1Enabled) { "Enabled" } else { "Disabled" }
+            "winVerifyTrust" = @{
+                "enabled" = $winVerifyTrustEnabled
+                "status" = if ($winVerifyTrustEnabled) { "Enabled" } else { "Disabled" }
+            }
+            "spectreMeltdown" = $spectreMeltdownStatus
             "tlsProtocols" = @{
                 "server" = @{
                     "tls10" = if ($tls10ServerEnabled -eq 1) { "Enabled" } else { "Disabled" }
