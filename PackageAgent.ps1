@@ -333,6 +333,81 @@ function Enable-SpectreMeltdownProtection {
     }
 }
 
+# Function to check and remediate SMB signing
+function Get-SMBSigningStatus {
+    try {
+        $status = @{
+            "serverEnabled" = $true
+            "serverRequired" = $false
+            "clientEnabled" = $true
+            "clientRequired" = $false
+        }
+
+        # Check server signing settings
+        $serverSigningPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+        $serverEnabled = (Get-ItemProperty -Path $serverSigningPath -Name "EnableSecuritySignature" -ErrorAction SilentlyContinue).EnableSecuritySignature
+        $serverRequired = (Get-ItemProperty -Path $serverSigningPath -Name "RequireSecuritySignature" -ErrorAction SilentlyContinue).RequireSecuritySignature
+
+        if ($serverEnabled -ne $null) {
+            $status.serverEnabled = ($serverEnabled -eq 1)
+        }
+        if ($serverRequired -ne $null) {
+            $status.serverRequired = ($serverRequired -eq 1)
+        }
+
+        # Check client signing settings
+        $clientSigningPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        $clientEnabled = (Get-ItemProperty -Path $clientSigningPath -Name "EnableSecuritySignature" -ErrorAction SilentlyContinue).EnableSecuritySignature
+        $clientRequired = (Get-ItemProperty -Path $clientSigningPath -Name "RequireSecuritySignature" -ErrorAction SilentlyContinue).RequireSecuritySignature
+
+        if ($clientEnabled -ne $null) {
+            $status.clientEnabled = ($clientEnabled -eq 1)
+        }
+        if ($clientRequired -ne $null) {
+            $status.clientRequired = ($clientRequired -eq 1)
+        }
+
+        return $status
+    }
+    catch {
+        Write-Log "Failed to check SMB signing status: $_" "ERROR"
+        return $null
+    }
+}
+
+# Function to remediate SMB signing
+function Enable-SMBSigning {
+    if (-not (Test-Administrator)) {
+        Write-Log "SMB signing remediation requires administrator privileges. Please run the script as administrator." "ERROR"
+        return $false
+    }
+
+    try {
+        # Server signing settings
+        $serverSigningPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+        if (-not (Test-Path $serverSigningPath)) {
+            New-Item -Path $serverSigningPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $serverSigningPath -Name "EnableSecuritySignature" -Value 1 -Type DWord -Force
+        Set-ItemProperty -Path $serverSigningPath -Name "RequireSecuritySignature" -Value 1 -Type DWord -Force
+
+        # Client signing settings
+        $clientSigningPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        if (-not (Test-Path $clientSigningPath)) {
+            New-Item -Path $clientSigningPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $clientSigningPath -Name "EnableSecuritySignature" -Value 1 -Type DWord -Force
+        Set-ItemProperty -Path $clientSigningPath -Name "RequireSecuritySignature" -Value 1 -Type DWord -Force
+
+        Write-Log "Successfully enabled SMB signing for both client and server" "INFO"
+        return $true
+    }
+    catch {
+        Write-Log "Failed to enable SMB signing: $_" "ERROR"
+        return $false
+    }
+}
+
 # Function to get hardening information
 function Get-HardeningInfo {
     try {
@@ -364,6 +439,19 @@ function Get-HardeningInfo {
         if ($smb1Enabled) {
             Write-Log "SMB1 is enabled. Attempting to disable..." "WARNING"
             Disable-SMB1
+        }
+
+        # Check SMB signing status
+        $smbSigningStatus = Get-SMBSigningStatus
+        if ($smbSigningStatus) {
+            # Attempt remediation if signing is not enabled or required
+            if (-not $smbSigningStatus.serverEnabled -or -not $smbSigningStatus.serverRequired -or 
+                -not $smbSigningStatus.clientEnabled -or -not $smbSigningStatus.clientRequired) {
+                Write-Log "SMB signing is not fully enabled. Attempting to enable..." "WARNING"
+                Enable-SMBSigning
+                # Refresh status after remediation
+                $smbSigningStatus = Get-SMBSigningStatus
+            }
         }
 
         # Check WinVerifyTrust Signature Validation
@@ -475,6 +563,7 @@ function Get-HardeningInfo {
         $hardeningInfo = @{
             "smb1Enabled" = $smb1Enabled
             "smb1Status" = if ($smb1Enabled) { "Enabled" } else { "Disabled" }
+            "smbSigning" = $smbSigningStatus
             "winVerifyTrust" = @{
                 "enabled" = $winVerifyTrustEnabled
                 "status" = if ($winVerifyTrustEnabled) { "Enabled" } else { "Disabled" }
