@@ -341,6 +341,10 @@ function Get-SMBSigningStatus {
             "serverRequired" = $false
             "clientEnabled" = $true
             "clientRequired" = $false
+            "smbv2" = @{
+                "enabled" = $true
+                "required" = $false
+            }
         }
 
         # Check server signing settings
@@ -365,6 +369,18 @@ function Get-SMBSigningStatus {
         }
         if ($clientRequired -ne $null) {
             $status.clientRequired = ($clientRequired -eq 1)
+        }
+
+        # Check SMBv2 signing settings
+        $smbv2Path = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        $smbv2Enabled = (Get-ItemProperty -Path $smbv2Path -Name "SMB2Enabled" -ErrorAction SilentlyContinue).SMB2Enabled
+        $smbv2SigningRequired = (Get-ItemProperty -Path $smbv2Path -Name "SMB2SigningRequired" -ErrorAction SilentlyContinue).SMB2SigningRequired
+
+        if ($smbv2Enabled -ne $null) {
+            $status.smbv2.enabled = ($smbv2Enabled -eq 1)
+        }
+        if ($smbv2SigningRequired -ne $null) {
+            $status.smbv2.required = ($smbv2SigningRequired -eq 1)
         }
 
         return $status
@@ -399,7 +415,11 @@ function Enable-SMBSigning {
         Set-ItemProperty -Path $clientSigningPath -Name "EnableSecuritySignature" -Value 1 -Type DWord -Force
         Set-ItemProperty -Path $clientSigningPath -Name "RequireSecuritySignature" -Value 1 -Type DWord -Force
 
-        Write-Log "Successfully enabled SMB signing for both client and server" "INFO"
+        # SMBv2 signing settings
+        Set-ItemProperty -Path $clientSigningPath -Name "SMB2Enabled" -Value 1 -Type DWord -Force
+        Set-ItemProperty -Path $clientSigningPath -Name "SMB2SigningRequired" -Value 1 -Type DWord -Force
+
+        Write-Log "Successfully enabled SMB signing for both client and server, including SMBv2" "INFO"
         return $true
     }
     catch {
@@ -635,6 +655,11 @@ function Send-PackageReport {
                             "enabled" = $hardeningInfo.smbSigning.clientEnabled
                             "required" = $hardeningInfo.smbSigning.clientRequired
                             "status" = if ($hardeningInfo.smbSigning.clientEnabled -and $hardeningInfo.smbSigning.clientRequired) { "Fully Protected" } elseif ($hardeningInfo.smbSigning.clientEnabled) { "Partially Protected" } else { "Vulnerable" }
+                        }
+                        "smbv2" = @{
+                            "enabled" = $hardeningInfo.smbSigning.smbv2.enabled
+                            "required" = $hardeningInfo.smbSigning.smbv2.required
+                            "status" = if ($hardeningInfo.smbSigning.smbv2.enabled -and $hardeningInfo.smbSigning.smbv2.required) { "Fully Protected" } elseif ($hardeningInfo.smbSigning.smbv2.enabled) { "Partially Protected" } else { "Vulnerable" }
                         }
                     }
                 }
