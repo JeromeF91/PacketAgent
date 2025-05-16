@@ -13,7 +13,7 @@ Before running the agent, update the following configuration in `PackageAgent.ps
 
 ```powershell
 $config = @{
-    ApiPostEndpoint = "https://n8n.chezjf.com/webhook/report"  # Replace with your actual API endpoint for reporting
+    ApiPostEndpoint = "https://n8n.chezjf.com/webhook-test/report"  # Replace with your actual API endpoint for reporting
     LogPath = ".\logs"
     LogFile = "package_agent.log"
 }
@@ -34,9 +34,23 @@ The agent sends package reports to this endpoint and expects a response with pac
             "name": "package-name",
             "version": "1.0.0"
         }
-    ]
+    ],
+    "diskSpace": {
+        "totalSize": 256060514304,
+        "freeSpace": 128030257152,
+        "usedSpace": 128030257152,
+        "freeSpacePercent": 50.0,
+        "driveLetter": "C:",
+        "fileSystem": "NTFS",
+        "volumeName": "Windows"
+    }
 }
 ```
+
+The disk space information is provided in bytes. The `freeSpacePercent` is rounded to 2 decimal places. Additional disk information includes:
+- `driveLetter`: The drive letter (e.g., "C:")
+- `fileSystem`: The file system type (e.g., "NTFS")
+- `volumeName`: The volume name of the drive
 
 #### Response Format
 The API should return a response with packages to install/update in the following format:
@@ -63,7 +77,9 @@ The API should return a response with packages to install/update in the followin
 
 ## Workflow
 
-1. The agent collects information about currently installed packages
+1. The agent collects information about:
+   - Currently installed packages
+   - Available disk space on C: drive (including file system details)
 2. Sends this information to the API endpoint
 3. Processes any packages returned in the API response
 4. Installs or updates packages as needed

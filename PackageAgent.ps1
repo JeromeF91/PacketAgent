@@ -3,6 +3,7 @@
 # Configuration
 $config = @{
     ApiPostEndpoint = "https://n8n.chezjf.com/webhook/report"  # Replace with your actual API endpoint for reporting
+    #ApiPostEndpoint = "https://n8n.chezjf.com/webhook-test/report"  # Replace with your actual API endpoint for reporting
     LogPath = ".\logs"
     LogFile = "package_agent.log"
 }
@@ -91,20 +92,115 @@ function Install-UpdatePackages {
     }
 }
 
+# Function to get disk space information
+function Get-DiskSpaceInfo {
+    try {
+        $drive = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'"
+        if ($drive) {
+            $totalSize = [int64]$drive.Size
+            $freeSpace = [int64]$drive.FreeSpace
+            
+            # Validate that we have valid size values
+            if ($totalSize -gt 0 -and $freeSpace -ge 0) {
+                $usedSpace = $totalSize - $freeSpace
+                $freeSpacePercent = [math]::Round(($freeSpace / $totalSize) * 100, 2)
+                
+                $diskInfo = @{
+                    totalSize = $totalSize
+                    freeSpace = $freeSpace
+                    usedSpace = $usedSpace
+                    freeSpacePercent = $freeSpacePercent
+                    driveLetter = $drive.DeviceID
+                    fileSystem = $drive.FileSystem
+                    volumeName = $drive.VolumeName
+                }
+                Write-Log "Disk space info retrieved: $($diskInfo | ConvertTo-Json)" -Level "DEBUG"
+                return $diskInfo
+            }
+            else {
+                Write-Log "Invalid disk size values detected: TotalSize=$totalSize, FreeSpace=$freeSpace" -Level "WARNING"
+                return $null
+            }
+        }
+        Write-Log "Could not get valid disk space information for C: drive" -Level "WARNING"
+        return $null
+    }
+    catch {
+        Write-Log "Failed to get disk space information: $_" -Level "ERROR"
+        return $null
+    }
+}
+
+# Function to get Windows version information
+function Get-WindowsVersionInfo {
+    try {
+        $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem
+        $versionInfo = @{
+            caption = $osInfo.Caption
+            version = $osInfo.Version
+            buildNumber = $osInfo.BuildNumber
+            osArchitecture = $osInfo.OSArchitecture
+            lastBootUpTime = $osInfo.LastBootUpTime.ToString("o")
+            installDate = $osInfo.InstallDate.ToString("o")
+        }
+        Write-Log "Windows version info retrieved: $($versionInfo | ConvertTo-Json)" -Level "DEBUG"
+        return $versionInfo
+    }
+    catch {
+        Write-Log "Failed to get Windows version information: $_" -Level "ERROR"
+        return $null
+    }
+}
+
+# Function to get hardening information
+function Get-HardeningInfo {
+    try {
+        # Check SMB1 status using registry instead of Get-WindowsOptionalFeature
+        $smb1Status = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters" -Name "AllowInsecureGuestAuth" -ErrorAction SilentlyContinue).AllowInsecureGuestAuth
+        $smb1Enabled = $false
+        
+        if ($smb1Status -ne $null) {
+            $smb1Enabled = ($smb1Status -eq 1)
+        }
+        
+        $hardeningInfo = @{
+            "smb1Enabled" = $smb1Enabled
+            "smb1Status" = if ($smb1Enabled) { "Enabled" } else { "Disabled" }
+        }
+        
+        Write-Log "Hardening info retrieved: $($hardeningInfo | ConvertTo-Json)" "DEBUG"
+        return $hardeningInfo
+    }
+    catch {
+        Write-Log "Failed to get hardening information: $_" "ERROR"
+        return $null
+    }
+}
+
 # Function to send package report to API and get packages to install
 function Send-PackageReport {
     try {
         $hostname = [System.Net.Dns]::GetHostName()
         $installedPackages = Get-InstalledPackages
+        $diskInfo = Get-DiskSpaceInfo
+        $windowsInfo = Get-WindowsVersionInfo
+        $hardeningInfo = Get-HardeningInfo
         
         if ($installedPackages) {
             $report = @{
                 hostname = $hostname
                 timestamp = (Get-Date).ToString("o")
                 packages = $installedPackages
+                windowsInfo = $windowsInfo
+                hardening = $hardeningInfo
             }
             
-            $jsonBody = $report | ConvertTo-Json
+            # Add disk space info if available
+            if ($diskInfo) {
+                $report.diskSpace = $diskInfo
+            }
+            
+            $jsonBody = $report | ConvertTo-Json -Depth 10
             Write-Log "Sending report to API: $jsonBody" -Level "DEBUG"
             
             $response = Invoke-RestMethod -Uri $config.ApiPostEndpoint -Method Post -Body $jsonBody -ContentType "application/json"
