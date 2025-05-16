@@ -620,6 +620,24 @@ function Send-PackageReport {
                 packages = $installedPackages
                 windowsInfo = $windowsInfo
                 hardening = $hardeningInfo
+                smb = @{
+                    "smb1" = @{
+                        "enabled" = $hardeningInfo.smb1Enabled
+                        "status" = $hardeningInfo.smb1Status
+                    }
+                    "signing" = @{
+                        "server" = @{
+                            "enabled" = $hardeningInfo.smbSigning.serverEnabled
+                            "required" = $hardeningInfo.smbSigning.serverRequired
+                            "status" = if ($hardeningInfo.smbSigning.serverEnabled -and $hardeningInfo.smbSigning.serverRequired) { "Fully Protected" } elseif ($hardeningInfo.smbSigning.serverEnabled) { "Partially Protected" } else { "Vulnerable" }
+                        }
+                        "client" = @{
+                            "enabled" = $hardeningInfo.smbSigning.clientEnabled
+                            "required" = $hardeningInfo.smbSigning.clientRequired
+                            "status" = if ($hardeningInfo.smbSigning.clientEnabled -and $hardeningInfo.smbSigning.clientRequired) { "Fully Protected" } elseif ($hardeningInfo.smbSigning.clientEnabled) { "Partially Protected" } else { "Vulnerable" }
+                        }
+                    }
+                }
             }
             
             # Add disk space info if available
