@@ -1,0 +1,22 @@
+# Logs
+logs/
+*.log
+
+# PowerShell
+*.ps1xml
+*.psc1
+*.psd1
+*.psm1
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains Rider
+.idea/
+*.sln.iml 
